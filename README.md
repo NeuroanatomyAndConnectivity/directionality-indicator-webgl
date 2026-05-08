@@ -144,8 +144,17 @@ end_header
 ...vertex data, one line per vertex...
 ...face data, one line per triangle...
 ```
-Triangle faces only. Per-vertex colors in the PLY are read but
-overridden by the parcellation-derived palette below.
+Triangle faces only. **Per-vertex colors in the PLY (the optional
+`red` / `green` / `blue` columns) are used directly as the surface
+palette when present.** When the PLY has no color columns, the
+surface falls back to a label-derived HSV-wheel palette keyed by
+`labelorder` index. The labels file is always used to compute the
+directionality field that the arrows follow, regardless of where
+the surface colors come from.
+
+> **TODO:** decouple surface colors entirely from the PLY by
+> reading a separate colormap file, so the PLY can be pure
+> geometry.
 
 **`.labels`** — one integer per line, one line per mesh vertex. The
 integer is the region ID for that vertex.
