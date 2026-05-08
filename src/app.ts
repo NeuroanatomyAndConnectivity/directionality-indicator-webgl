@@ -91,6 +91,11 @@ export async function runApp(container: HTMLElement): Promise<void> {
   let meshDirections: Float32Array | null = null;
   let meshNormals: Float32Array | null = null;
   let meshColors: Uint8Array | null = null;
+  // Cached color sources for runtime swapping via the panel toggle. Either may
+  // be null: PLY-derived only when the file has red/green/blue columns; label-
+  // derived only when labels.length matches vertex count.
+  let meshPlyColors: Uint8Array | null = null;
+  let meshLabelColors: Uint8Array | null = null;
   let meshAdjacency: ReturnType<typeof buildMeshAdjacency> | null = null;
   let meshBorderMask: Uint8Array | null = null;
   let meshGL: ReturnType<typeof createMeshVAO> | null = null;
@@ -168,21 +173,22 @@ export async function runApp(container: HTMLElement): Promise<void> {
         `Vertex count mismatch: mesh has ${mesh.vertices.length / 3} vertices, labels has ${labels.length}`,
       );
     }
-    // Surface colors: PLY-provided RGB takes precedence; fall back to a
-    // label-derived HSV palette when the PLY has no color columns.
+    // Cache both color sources so the panel can toggle between them without
+    // re-running the rest of the dataset pipeline.
     const vertexCount = mesh.vertices.length / 3;
-    let colors: Uint8Array;
+    let plyColors: Uint8Array | null = null;
     if (mesh.colors && mesh.colors.length === vertexCount * 3) {
-      colors = new Uint8Array(vertexCount * 4);
+      plyColors = new Uint8Array(vertexCount * 4);
       for (let v = 0; v < vertexCount; v++) {
-        colors[v * 4 + 0] = mesh.colors[v * 3 + 0];
-        colors[v * 4 + 1] = mesh.colors[v * 3 + 1];
-        colors[v * 4 + 2] = mesh.colors[v * 3 + 2];
-        colors[v * 4 + 3] = 255;
+        plyColors[v * 4 + 0] = mesh.colors[v * 3 + 0];
+        plyColors[v * 4 + 1] = mesh.colors[v * 3 + 1];
+        plyColors[v * 4 + 2] = mesh.colors[v * 3 + 2];
+        plyColors[v * 4 + 3] = 255;
       }
-    } else {
-      colors = buildVertexColors(labels, order);
     }
+    const labelColors = buildVertexColors(labels, order);
+    // Active palette: PLY if present and not overridden, label fallback otherwise.
+    const colors = !params.useLabelColors && plyColors ? plyColors : labelColors;
     const normals = computeVertexNormals(mesh.vertices, mesh.indices);
     const adjacency = buildMeshAdjacency(mesh.indices, mesh.vertices.length / 3);
     const borderMask = computeBorderVertexMask(labels, adjacency);
@@ -218,6 +224,8 @@ export async function runApp(container: HTMLElement): Promise<void> {
     meshDirections = directions;
     meshNormals = normals;
     meshColors = colors;
+    meshPlyColors = plyColors;
+    meshLabelColors = labelColors;
     meshAdjacency = adjacency;
     meshBorderMask = borderMask;
     meshGL = newMeshGL;
@@ -239,6 +247,32 @@ export async function runApp(container: HTMLElement): Promise<void> {
       applyCanonicalView("lateral-left", newBounds.center, newBounds.radius);
     }
     view.requestRender();
+  }
+
+  // Swap the mesh's vertex colors between PLY-derived and label-derived without
+  // re-running the full loadDataset pipeline. Falls back to whichever array is
+  // available if the requested one isn't.
+  function applyColorChoice(useLabel: boolean): void {
+    if (!meshData || !meshDirections || !meshNormals) return;
+    const next = (useLabel || !meshPlyColors) ? meshLabelColors : meshPlyColors;
+    if (!next) return;
+    const tAttribs = surfaceLIC.transformAttribs;
+    meshGL = createMeshVAO(
+      gl,
+      [
+        { def: { name: "a_position", data: meshData.vertices, size: 3, type: gl.FLOAT, normalized: false } as AttribDef,
+          location: tAttribs.get("a_position") ?? -1 },
+        { def: { name: "a_normal", data: meshNormals, size: 3, type: gl.FLOAT, normalized: false } as AttribDef,
+          location: tAttribs.get("a_normal") ?? -1 },
+        { def: { name: "a_color", data: next, size: 4, type: gl.UNSIGNED_BYTE, normalized: true } as AttribDef,
+          location: tAttribs.get("a_color") ?? -1 },
+        { def: { name: "a_vector", data: meshDirections, size: 3, type: gl.FLOAT, normalized: false } as AttribDef,
+          location: tAttribs.get("a_vector") ?? -1 },
+      ],
+      meshData.indices,
+    );
+    meshColors = next;
+    rebuildArrows(params);
   }
 
   // ---- Canonical-view definitions, shared by panel buttons + screenshot ----
@@ -327,10 +361,16 @@ export async function runApp(container: HTMLElement): Promise<void> {
   surfaceLIC.resize(view.width, view.height);
 
   // ---- Side panel: param change + dataset load callbacks ----
+  let lastUseLabelColors = params.useLabelColors;
   const { element: panelElement } = createPanel(
     params,
     (p, isExpensive) => {
-      if (isExpensive) rebuildArrows(p);
+      if (p.useLabelColors !== lastUseLabelColors) {
+        lastUseLabelColors = p.useLabelColors;
+        applyColorChoice(p.useLabelColors);
+      } else if (isExpensive) {
+        rebuildArrows(p);
+      }
       view.requestRender();
     },
     async ({ ply, labels: labelsFile, labelorder: orderFile }) => {

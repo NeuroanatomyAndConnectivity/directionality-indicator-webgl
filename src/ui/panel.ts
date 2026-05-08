@@ -15,6 +15,7 @@ export interface Params {
   showLIC: boolean;            // gate the LIC streamline mixing in compose
   showColor: boolean;          // gate the parcellation color (when off, surface is gray)
   showArrows: boolean;         // gate the arrow draw pass
+  useLabelColors: boolean;     // surface palette: false=PLY RGB (when present), true=label-order HSV
   // LIC
   licIterations: number;       // u_numIter (advection length)
   licHighContrast: boolean;    // u_useHighContrast
@@ -55,6 +56,7 @@ export const defaultParams: Params = {
   showLIC: true,
   showColor: true,
   showArrows: true,
+  useLabelColors: false,
   licIterations: 50,
   licHighContrast: true,
   licEmphasizeSingular: false,
@@ -138,6 +140,7 @@ interface ControlSpec {
 const VISIBILITY_CONTROLS: ControlSpec[] = [
   { key: "showLIC", label: "LIC streamlines", type: "checkbox" },
   { key: "showColor", label: "Parcellation colors", type: "checkbox" },
+  { key: "useLabelColors", label: "Use label-order palette (override PLY RGB)", type: "checkbox" },
   { key: "showArrows", label: "Arrows", type: "checkbox" },
 ];
 
