@@ -168,7 +168,21 @@ export async function runApp(container: HTMLElement): Promise<void> {
         `Vertex count mismatch: mesh has ${mesh.vertices.length / 3} vertices, labels has ${labels.length}`,
       );
     }
-    const colors = buildVertexColors(labels, order);
+    // Surface colors: PLY-provided RGB takes precedence; fall back to a
+    // label-derived HSV palette when the PLY has no color columns.
+    const vertexCount = mesh.vertices.length / 3;
+    let colors: Uint8Array;
+    if (mesh.colors && mesh.colors.length === vertexCount * 3) {
+      colors = new Uint8Array(vertexCount * 4);
+      for (let v = 0; v < vertexCount; v++) {
+        colors[v * 4 + 0] = mesh.colors[v * 3 + 0];
+        colors[v * 4 + 1] = mesh.colors[v * 3 + 1];
+        colors[v * 4 + 2] = mesh.colors[v * 3 + 2];
+        colors[v * 4 + 3] = 255;
+      }
+    } else {
+      colors = buildVertexColors(labels, order);
+    }
     const normals = computeVertexNormals(mesh.vertices, mesh.indices);
     const adjacency = buildMeshAdjacency(mesh.indices, mesh.vertices.length / 3);
     const borderMask = computeBorderVertexMask(labels, adjacency);
