@@ -286,9 +286,9 @@ export async function runApp(container: HTMLElement): Promise<void> {
     loadAndCache(cached.plyText, cached.labelsText, cached.orderText);
   } else {
     const [plyText0, labelsText0, orderText0] = await Promise.all([
-      fetchText("/data/label34.ply"),
-      fetchText("/data/label34.labels"),
-      fetchText("/data/label34.labelorder"),
+      fetchText(`${import.meta.env.BASE_URL}data/label34.ply`),
+      fetchText(`${import.meta.env.BASE_URL}data/label34.labels`),
+      fetchText(`${import.meta.env.BASE_URL}data/label34.labelorder`),
     ]);
     loadAndCache(plyText0, labelsText0, orderText0);
     // Seed the cache with the default so subsequent reloads don't re-fetch.
