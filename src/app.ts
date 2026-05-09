@@ -29,7 +29,7 @@ import {
   rejectOverlappingArrows,
   computeBorderVertexMask,
 } from "./algorithms/seedArrows";
-import { createPanel, defaultParams, loadStoredParams, type Params, type ViewName } from "./ui/panel";
+import { createPanel, defaultParams, loadStoredParams, saveParams, type Params, type ViewName } from "./ui/panel";
 import { createSurfaceLIC } from "./algorithms/surfaceLIC";
 
 import arrowVertSrc from "./shaders/arrow.vert.glsl?raw";
@@ -342,6 +342,16 @@ export async function runApp(container: HTMLElement): Promise<void> {
       labelsText,
       orderText,
     });
+    // Record all three filenames so the panel status can list them. This
+    // covers the cold-start path; the panel's own bundled-select handler
+    // also sets these (idempotent).
+    params.lastDatasetName = `${name}.ply`;
+    params.lastDatasetFiles = {
+      ply: `${name}.ply`,
+      labels: `${name}.labels`,
+      labelorder: `${name}.labelorder`,
+    };
+    saveParams(params);
   }
 
   // Initial dataset load. Try the IndexedDB cache first so a previously-loaded

@@ -50,6 +50,7 @@ export interface Params {
   screenshotDPI: number;       // 72..1200; pixel scale = DPI / 96
   // Bookkeeping (no UI control)
   lastDatasetName: string | null; // name of the last user-uploaded dataset (display only)
+  lastDatasetFiles: { ply: string; labels: string; labelorder: string } | null; // all three filenames (for status display)
 }
 
 export const defaultParams: Params = {
@@ -84,6 +85,7 @@ export const defaultParams: Params = {
   surfaceShininess: 80,
   screenshotDPI: 600,
   lastDatasetName: null,
+  lastDatasetFiles: null,
 };
 
 export type OnChange = (params: Params, isExpensive: boolean) => void;
@@ -124,6 +126,42 @@ function saveParamsToStorage(params: Params): void {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(params));
   } catch {
     // ignore — quota errors etc; not worth bothering the user over.
+  }
+}
+
+/** Public version of saveParamsToStorage so non-panel code can persist edits. */
+export function saveParams(params: Params): void {
+  saveParamsToStorage(params);
+}
+
+/**
+ * Render the "Loaded:" status block. Prefers the three-filename form when
+ * available (set after any successful load), falls back to the single-name
+ * display, then to a placeholder when no dataset has been loaded yet.
+ */
+function renderLoadedStatus(status: HTMLElement, params: Params): void {
+  status.replaceChildren();
+  if (params.lastDatasetFiles) {
+    const f = params.lastDatasetFiles;
+    const head = document.createElement("div");
+    head.textContent = "Loaded:";
+    status.appendChild(head);
+    const list = document.createElement("div");
+    list.style.paddingLeft = "8px";
+    list.style.opacity = "0.9";
+    for (const name of [f.ply, f.labels, f.labelorder]) {
+      const line = document.createElement("div");
+      line.textContent = name;
+      list.appendChild(line);
+    }
+    status.appendChild(list);
+    status.style.color = "var(--ok)";
+  } else if (params.lastDatasetName) {
+    status.textContent = `Loaded: ${params.lastDatasetName}`;
+    status.style.color = "var(--ok)";
+  } else {
+    status.textContent = "Pick a .ply + .labels + .labelorder triple";
+    status.style.color = "";
   }
 }
 
@@ -440,12 +478,7 @@ export function createPanel(
 
     const status = document.createElement("div");
     status.className = "panel-note";
-    if (params.lastDatasetName) {
-      status.textContent = `Loaded: ${params.lastDatasetName}`;
-      status.style.color = "var(--ok)";
-    } else {
-      status.textContent = "Pick a .ply + .labels + .labelorder triple";
-    }
+    renderLoadedStatus(status, params);
     body.appendChild(status);
 
     // Bundled-datasets selector (cloud-side files in public/data/). The
@@ -507,9 +540,13 @@ export function createPanel(
         try {
           await onLoadBundled(name);
           params.lastDatasetName = `${name}.ply`;
+          params.lastDatasetFiles = {
+            ply: `${name}.ply`,
+            labels: `${name}.labels`,
+            labelorder: `${name}.labelorder`,
+          };
           saveParamsToStorage(params);
-          status.textContent = `Loaded: ${name} (bundled)`;
-          status.style.color = "var(--ok)";
+          renderLoadedStatus(status, params);
           lastSelected = name;
         } catch (e) {
           status.textContent = "Error: " + (e instanceof Error ? e.message : String(e));
@@ -550,9 +587,13 @@ export function createPanel(
       try {
         await onLoadDataset({ ply, labels: labelsFile, labelorder: labelorderFile });
         params.lastDatasetName = ply.name;
+        params.lastDatasetFiles = {
+          ply: ply.name,
+          labels: labelsFile.name,
+          labelorder: labelorderFile.name,
+        };
         saveParamsToStorage(params);
-        status.textContent = `Loaded: ${ply.name}`;
-        status.style.color = "var(--ok)";
+        renderLoadedStatus(status, params);
       } catch (e) {
         status.textContent = "Error: " + (e instanceof Error ? e.message : String(e));
         status.style.color = "var(--danger)";
