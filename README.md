@@ -1,5 +1,7 @@
 # Directionality Indicator (Web)
 
+**🔗 Live demo: https://neuroanatomyandconnectivity.github.io/directionality-indicator-webgl/**
+
 Browser-based visualization of directional information on anatomical surfaces.
 A WebGL2 / TypeScript port of the C++/Qt/OpenGL 3.3 [DirectionalityIndicator](https://github.com/NeuroanatomyAndConnectivity/DirectionalityIndicator)
 by Sebastian Eichelbaum and the Max Planck Research Group "Neuroanatomy and
