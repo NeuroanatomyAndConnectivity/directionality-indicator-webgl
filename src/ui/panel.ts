@@ -1,4 +1,5 @@
 import { clearDataset } from "../io/datasetCache";
+import { attachTooltip } from "./tooltip";
 
 /**
  * Side panel with controls for LIC + arrow parameters. Toggleable.
@@ -176,48 +177,74 @@ interface ControlSpec {
   step?: number;
   /** Mark this control's changes as expensive — host should debounce. */
   expensive?: boolean;
+  /** Hover-tooltip text describing what this control does. */
+  tooltip?: string;
 }
 
 const VISIBILITY_CONTROLS: ControlSpec[] = [
-  { key: "showLIC", label: "LIC streamlines", type: "checkbox" },
-  { key: "showColor", label: "Parcellation colors", type: "checkbox" },
-  { key: "useLabelColors", label: "Use label-order palette (override PLY RGB)", type: "checkbox" },
-  { key: "showArrows", label: "Arrows", type: "checkbox" },
+  { key: "showLIC", label: "LIC streamlines", type: "checkbox",
+    tooltip: "Toggle the swirling streamline pattern (Line Integral Convolution) that visualizes the directional field on the surface." },
+  { key: "showColor", label: "Parcellation colors", type: "checkbox",
+    tooltip: "Toggle per-region surface colors. When off, the surface goes black so the LIC streaks read more clearly." },
+  { key: "useLabelColors", label: "Use label-order palette (override PLY RGB)", type: "checkbox",
+    tooltip: "Use the label-order HSV palette instead of any RGB colors stored in the PLY mesh. Useful when the PLY's vertex colors aren't what you want." },
+  { key: "showArrows", label: "Arrows", type: "checkbox",
+    tooltip: "Toggle the directional glyph overlay." },
 ];
 
 const LIC_CONTROLS: ControlSpec[] = [
-  { key: "licIterations", label: "Streamline length (iterations)", type: "range", min: 5, max: 100, step: 1 },
-  { key: "licHighContrast", label: "High contrast", type: "checkbox" },
-  { key: "licEmphasizeSingular", label: "Emphasize singularities", type: "checkbox" },
+  { key: "licIterations", label: "Streamline length (iterations)", type: "range", min: 5, max: 100, step: 1,
+    tooltip: "How many advection steps each noise sample takes along the field. Higher = longer, more visible streaks." },
+  { key: "licHighContrast", label: "High contrast", type: "checkbox",
+    tooltip: "Boost the LIC contribution to the composite for crisper streaks." },
+  { key: "licEmphasizeSingular", label: "Emphasize singularities", type: "checkbox",
+    tooltip: "Highlight regions with weak directional magnitude (saddle points, vortex centers) in white/black bands so field topology reads at a glance." },
 ];
 
 // Section now split into two parts: layout-level placement (above the
 // designer) and per-glyph shape (inside the designer with a live preview).
 const GLYPH_LAYOUT_CONTROLS: ControlSpec[] = [
-  { key: "arrowBorderMode", label: "Borders only (M2 mode)", type: "checkbox", expensive: true },
-  { key: "arrowDensity", label: "Density (smaller = denser)", type: "range", min: 0.02, max: 0.18, step: 0.005, expensive: true },
-  { key: "arrowScale", label: "Size", type: "range", min: 0.002, max: 0.025, step: 0.0005, expensive: true },
-  { key: "arrowDist", label: "Distance from surface", type: "range", min: 0, max: 5, step: 0.1 },
+  { key: "arrowBorderMode", label: "Borders only", type: "checkbox", expensive: true,
+    tooltip: "Place glyphs only on parcellation borders, not the whole surface." },
+  { key: "arrowDensity", label: "Density (smaller = denser)", type: "range", min: 0.02, max: 0.18, step: 0.005, expensive: true,
+    tooltip: "Minimum spacing between glyphs as a fraction of mesh radius. Smaller numbers pack glyphs more densely." },
+  { key: "arrowScale", label: "Size", type: "range", min: 0.002, max: 0.025, step: 0.0005, expensive: true,
+    tooltip: "Overall glyph size as a fraction of mesh radius. Multiplies every glyph length and width proportionally." },
+  { key: "arrowDist", label: "Distance from surface", type: "range", min: 0, max: 5, step: 0.1,
+    tooltip: "How far above the surface the glyph bodies float, in mesh units relative to glyph size." },
 ];
 
 const GLYPH_DESIGNER_CONTROLS: ControlSpec[] = [
-  { key: "arrowHeight", label: "Length", type: "range", min: 0.5, max: 8, step: 0.1, expensive: true },
-  { key: "arrowWidth", label: "Head width", type: "range", min: 0.5, max: 4, step: 0.1 },
-  { key: "arrowBodyWidth", label: "Body width (fraction of head)", type: "range", min: 0.05, max: 1, step: 0.02 },
-  { key: "arrowOpacity", label: "Opacity", type: "range", min: 0, max: 1, step: 0.02 },
-  { key: "arrowFlipDirection", label: "Flip direction", type: "checkbox" },
-  { key: "arrowColorR", label: "Color", type: "color" },
+  { key: "arrowHeight", label: "Length", type: "range", min: 0.5, max: 8, step: 0.1, expensive: true,
+    tooltip: "Total length of the glyph along its flow direction. The Head/body ratio slider subdivides this length." },
+  { key: "arrowHeadFrac", label: "Head/body ratio", type: "range", min: 0, max: 1, step: 0.01,
+    tooltip: "Head's share of total length. 0 = pure body (rectangle, no head); 1 = pure head (full triangle, no body); 0.5 = head and body equal. Default 0.25." },
+  { key: "arrowWidth", label: "Head width", type: "range", min: 0.5, max: 4, step: 0.1,
+    tooltip: "Maximum width at the head's base. Body width is a fraction of this." },
+  { key: "arrowBodyWidth", label: "Body width (fraction of head)", type: "range", min: 0.05, max: 1, step: 0.02,
+    tooltip: "Body width as a fraction of head width. 0 = pin-thin shaft; 1 = uniform width with no flare." },
+  { key: "arrowOpacity", label: "Opacity", type: "range", min: 0, max: 1, step: 0.02,
+    tooltip: "Glyph alpha. Lower values let the LIC underlay show through." },
+  { key: "arrowFlipDirection", label: "Flip direction", type: "checkbox",
+    tooltip: "Reverse the direction every glyph points along its flow line. Instant — no recompute." },
+  { key: "arrowColorR", label: "Color", type: "color",
+    tooltip: "Glyph fill color. The preview background flips to a contrasting tone automatically." },
 ];
 
 const SCENE_CONTROLS: ControlSpec[] = [
-  { key: "bgColorR", label: "Background", type: "color" },
+  { key: "bgColorR", label: "Background", type: "color",
+    tooltip: "Canvas background color, used for the page background and as the reference background for screenshot transparency cropping." },
 ];
 
 const SURFACE_CONTROLS: ControlSpec[] = [
-  { key: "surfaceAmbient", label: "Ambient", type: "range", min: 0, max: 0.5, step: 0.01 },
-  { key: "surfaceDiffuse", label: "Diffuse", type: "range", min: 0, max: 1.5, step: 0.05 },
-  { key: "surfaceSpecular", label: "Specular (glare)", type: "range", min: 0, max: 1, step: 0.02 },
-  { key: "surfaceShininess", label: "Shininess (sharpness)", type: "range", min: 1, max: 400, step: 1 },
+  { key: "surfaceAmbient", label: "Ambient", type: "range", min: 0, max: 0.5, step: 0.01,
+    tooltip: "Constant lighting offset added to every surface pixel. Higher = flatter look." },
+  { key: "surfaceDiffuse", label: "Diffuse", type: "range", min: 0, max: 1.5, step: 0.05,
+    tooltip: "Light intensity scaled by surface-normal · light-direction. Higher = more pronounced shading from curvature." },
+  { key: "surfaceSpecular", label: "Specular (glare)", type: "range", min: 0, max: 1, step: 0.02,
+    tooltip: "Glare intensity. Higher = more shiny highlights (can make brains look plasticy)." },
+  { key: "surfaceShininess", label: "Shininess (sharpness)", type: "range", min: 1, max: 400, step: 1,
+    tooltip: "Specular sharpness. Higher = smaller, sharper highlights." },
 ];
 
 const COLLAPSE_STORAGE_KEY = "di-panel-collapsed-v1";
@@ -242,7 +269,7 @@ function saveCollapsedSections(collapsed: Set<string>): void {
   }
 }
 
-function createControl(spec: ControlSpec, params: Params, onChange: () => void, expensive: boolean): HTMLElement {
+function createControl(spec: ControlSpec, params: Params, onChange: () => void): HTMLElement {
   const wrapper = document.createElement("div");
   wrapper.className = "panel-control";
 
@@ -365,12 +392,7 @@ function createControl(spec: ControlSpec, params: Params, onChange: () => void, 
     wrapper.appendChild(input);
   }
 
-  if (expensive) {
-    const note = document.createElement("div");
-    note.className = "panel-note";
-    note.textContent = "Recomputed on release (~200 ms)";
-    wrapper.appendChild(note);
-  }
+  attachTooltip(wrapper, spec.tooltip);
 
   return wrapper;
 }
@@ -427,7 +449,7 @@ export function createPanel(
    * Build a collapsible section: clickable heading + body wrapper.
    * Returns the body element so callers can append controls into it.
    */
-  const makeSection = (id: string, title: string): HTMLElement => {
+  const makeSection = (id: string, title: string, tooltip?: string): HTMLElement => {
     const section = document.createElement("section");
     section.className = "panel-section";
     section.dataset.section = id;
@@ -472,12 +494,14 @@ export function createPanel(
     section.appendChild(heading);
     section.appendChild(bodyWrap);
     panel.appendChild(section);
+    attachTooltip(heading, tooltip);
     return bodyInner;
   };
 
   // ---- Data section (optional) ----
   if (onLoadDataset) {
-    const body = makeSection("data", "Data");
+    const body = makeSection("data", "Data",
+      "Pick a bundled dataset, or upload your own .ply + .labels + .labelorder triple. Loaded datasets are cached so they auto-restore on reload.");
 
     const status = document.createElement("div");
     status.className = "panel-note";
@@ -504,6 +528,7 @@ export function createPanel(
       bundledRow.appendChild(bundledLabel);
       bundledRow.appendChild(select);
       body.appendChild(bundledRow);
+      attachTooltip(bundledRow, "Load one of the example datasets bundled with the site. Each dataset has matching .ply mesh, .labels per-vertex, and .labelorder files.");
 
       // Track current selection so we can restore it after a failed load.
       let lastSelected = "";
@@ -573,6 +598,7 @@ export function createPanel(
     fileLabel.htmlFor = fileInput.id;
     fileLabel.className = "panel-file-label";
     fileLabel.innerHTML = '<span class="icon" aria-hidden="true">⬆</span><span>Or upload local files…</span>';
+    attachTooltip(fileLabel, "Select all three files (.ply mesh, .labels per-vertex, .labelorder display order). They must share a vertex count.");
 
     fileInput.addEventListener("change", async () => {
       if (!fileInput.files) return;
@@ -627,16 +653,17 @@ export function createPanel(
   };
 
   if (views) {
-    const viewBody = makeSection("view", "View");
+    const viewBody = makeSection("view", "View",
+      "Snap to a canonical anatomical view, or rotate freely with mouse drag. Camera position auto-saves and restores on next load.");
     const viewGrid = document.createElement("div");
     viewGrid.className = "panel-view-grid";
-    const presets: { name: ViewName; label: string }[] = [
-      { name: "lateral-left", label: "Lateral L" },
-      { name: "lateral-right", label: "Lateral R" },
-      { name: "anterior", label: "Anterior" },
-      { name: "posterior", label: "Posterior" },
-      { name: "dorsal", label: "Dorsal" },
-      { name: "ventral", label: "Ventral" },
+    const presets: { name: ViewName; label: string; tip: string }[] = [
+      { name: "lateral-left",  label: "Lateral L",  tip: "Snap camera to the left lateral view." },
+      { name: "lateral-right", label: "Lateral R",  tip: "Snap camera to the right lateral view." },
+      { name: "anterior",      label: "Anterior",   tip: "Snap camera to the anterior (front) view." },
+      { name: "posterior",     label: "Posterior",  tip: "Snap camera to the posterior (back) view." },
+      { name: "dorsal",        label: "Dorsal",     tip: "Snap camera to the dorsal (top) view." },
+      { name: "ventral",       label: "Ventral",    tip: "Snap camera to the ventral (bottom) view." },
     ];
     for (const p of presets) {
       const btn = document.createElement("button");
@@ -645,6 +672,7 @@ export function createPanel(
       btn.textContent = p.label;
       btn.addEventListener("click", () => views.set(p.name));
       viewGrid.appendChild(btn);
+      attachTooltip(btn, p.tip);
     }
     viewBody.appendChild(viewGrid);
     const note = document.createElement("div");
@@ -653,24 +681,28 @@ export function createPanel(
     viewBody.appendChild(note);
   }
 
-  const visibilityBody = makeSection("visibility", "Visibility");
+  const visibilityBody = makeSection("visibility", "Visibility",
+    "Toggle which layers (LIC, parcellation colors, glyphs) are visible.");
   for (const c of VISIBILITY_CONTROLS) {
-    visibilityBody.appendChild(createControl(c, params, fire, false));
+    visibilityBody.appendChild(createControl(c, params, fire));
   }
 
-  const licBody = makeSection("lic", "LIC");
+  const licBody = makeSection("lic", "LIC",
+    "Tune the Line Integral Convolution streamline pattern that visualizes the directional field.");
   for (const c of LIC_CONTROLS) {
-    licBody.appendChild(createControl(c, params, fire, false));
+    licBody.appendChild(createControl(c, params, fire));
   }
 
-  const sceneBody = makeSection("scene", "Scene");
+  const sceneBody = makeSection("scene", "Scene",
+    "Background color for the canvas.");
   for (const c of SCENE_CONTROLS) {
-    sceneBody.appendChild(createControl(c, params, fire, false));
+    sceneBody.appendChild(createControl(c, params, fire));
   }
 
-  const surfaceBody = makeSection("surface", "Surface shading");
+  const surfaceBody = makeSection("surface", "Surface shading",
+    "Phong lighting parameters for the underlying parcellation surface (ambient, diffuse, specular, shininess).");
   for (const c of SURFACE_CONTROLS) {
-    surfaceBody.appendChild(createControl(c, params, fire, false));
+    surfaceBody.appendChild(createControl(c, params, fire));
   }
 
   // ---- Glyphs section ----
@@ -679,7 +711,8 @@ export function createPanel(
   // shape-shaping controls (length, head width, body width, opacity, flip,
   // color). The preview re-renders on every shape-control change so users can
   // see the glyph evolve before scrolling back up to the brain.
-  const glyphsBody = makeSection("arrows", "Glyphs");
+  const glyphsBody = makeSection("arrows", "Glyphs",
+    "Place and design the directional glyphs overlaid on the brain. The Glyph designer below the layout controls includes a live preview.");
 
   for (const c of GLYPH_LAYOUT_CONTROLS) {
     const isExpensive = !!c.expensive;
@@ -687,7 +720,7 @@ export function createPanel(
       createControl(c, params, () => {
         if (isExpensive) dirtyExpensive = true;
         fire();
-      }, isExpensive),
+      }),
     );
   }
 
@@ -699,6 +732,7 @@ export function createPanel(
   designerHeading.className = "glyph-designer-heading";
   designerHeading.textContent = "Glyph designer";
   designer.appendChild(designerHeading);
+  attachTooltip(designerHeading, "Per-glyph shape parameters with a live preview. The brain uses the same parameters in real time.");
 
   const previewWrap = document.createElement("div");
   previewWrap.className = "glyph-preview-wrap";
@@ -730,6 +764,7 @@ export function createPanel(
   previewGroup.appendChild(glyphPath);
   previewWrap.appendChild(previewSvg);
   designer.appendChild(previewWrap);
+  attachTooltip(previewWrap, "Live preview of a single glyph using the current shape parameters. The background flips between dark and light to keep contrast with the glyph color.");
 
   const renderPreview = (): void => {
     // Map slider values into SVG units. Scales chosen so defaults sit
@@ -776,116 +811,6 @@ export function createPanel(
     baseline.setAttribute("stroke", lum > 0.5 ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.18)");
   };
 
-  // Coupled body/head fraction sliders. They share `arrowHeadFrac`: body =
-  // 1 - head, head = head. Slider min/max clamps avoid degenerate (zero-
-  // length) head or body, which would also divide-by-zero in the shader.
-  const buildFractionPair = (): DocumentFragment => {
-    const frag = document.createDocumentFragment();
-    const minFrac = 0.05;
-    const maxFrac = 0.95;
-    const stepFrac = 0.01;
-
-    const formatFrac = (n: number): string => n.toFixed(2);
-    const clamp = (v: number): number => Math.max(minFrac, Math.min(maxFrac, v));
-
-    interface FractionSlider {
-      wrap: HTMLElement;
-      slider: HTMLInputElement;
-      input: HTMLInputElement;
-    }
-    const makeSlider = (label: string): FractionSlider => {
-      const wrap = document.createElement("div");
-      wrap.className = "panel-control";
-      const lbl = document.createElement("label");
-      lbl.className = "panel-label";
-      const txt = document.createElement("span");
-      txt.className = "panel-label-text";
-      txt.textContent = label;
-      lbl.appendChild(txt);
-
-      // Editable value input — same pattern as createControl's range type so
-      // typed numbers commit via Enter/blur and Escape reverts.
-      const input = document.createElement("input");
-      input.type = "text";
-      input.className = "panel-value panel-value-input";
-      input.inputMode = "decimal";
-      input.spellcheck = false;
-      input.title = `Click to type a value (range: ${minFrac}–${maxFrac})`;
-      lbl.appendChild(input);
-
-      const slider = document.createElement("input");
-      slider.type = "range";
-      slider.min = String(minFrac);
-      slider.max = String(maxFrac);
-      slider.step = String(stepFrac);
-      wrap.appendChild(lbl);
-      wrap.appendChild(slider);
-      return { wrap, slider, input };
-    };
-
-    const bodyControl = makeSlider("Body length (fraction)");
-    const headControl = makeSlider("Head length (fraction)");
-
-    const sync = (): void => {
-      const body = 1 - params.arrowHeadFrac;
-      const head = params.arrowHeadFrac;
-      bodyControl.slider.value = String(body);
-      bodyControl.input.value = formatFrac(body);
-      headControl.slider.value = String(head);
-      headControl.input.value = formatFrac(head);
-    };
-    sync();
-
-    // Single commit point for either slider perspective. `isHead` distinguishes
-    // which raw value was supplied: the head fraction directly, or the body
-    // fraction (1 - head).
-    const commit = (raw: number, isHead: boolean): void => {
-      const headFrac = clamp(isHead ? raw : 1 - raw);
-      params.arrowHeadFrac = headFrac;
-      sync();
-      fire();
-      renderPreview();
-    };
-
-    // Wire slider drag inputs.
-    bodyControl.slider.addEventListener("input", () =>
-      commit(parseFloat(bodyControl.slider.value), false),
-    );
-    headControl.slider.addEventListener("input", () =>
-      commit(parseFloat(headControl.slider.value), true),
-    );
-
-    // Wire editable text inputs (Enter/blur commit, Escape revert, focus selects).
-    const wireTextInput = (input: HTMLInputElement, isHead: boolean): void => {
-      input.addEventListener("focus", () => input.select());
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          const n = parseFloat(input.value);
-          if (Number.isFinite(n)) commit(n, isHead);
-          else sync();
-          input.blur();
-        } else if (e.key === "Escape") {
-          sync();
-          input.blur();
-        }
-      });
-      input.addEventListener("blur", () => {
-        const n = parseFloat(input.value);
-        if (Number.isFinite(n)) commit(n, isHead);
-        else sync();
-      });
-    };
-    wireTextInput(bodyControl.input, false);
-    wireTextInput(headControl.input, true);
-
-    frag.appendChild(bodyControl.wrap);
-    frag.appendChild(headControl.wrap);
-    return frag;
-  };
-
-  // Render the existing ControlSpec controls, splicing the body/head
-  // fraction pair in right after Length so it reads as a length-related set.
   for (const c of GLYPH_DESIGNER_CONTROLS) {
     const isExpensive = !!c.expensive;
     designer.appendChild(
@@ -893,11 +818,8 @@ export function createPanel(
         if (isExpensive) dirtyExpensive = true;
         fire();
         renderPreview();
-      }, isExpensive),
+      }),
     );
-    if (c.key === "arrowHeight") {
-      designer.appendChild(buildFractionPair());
-    }
   }
   // Initial paint.
   renderPreview();
@@ -905,7 +827,8 @@ export function createPanel(
 
   // ---- Screenshot section (optional) ----
   if (screenshot) {
-    const screenshotBody = makeSection("screenshot", "Screenshot");
+    const screenshotBody = makeSection("screenshot", "Screenshot",
+    "Save high-resolution PNGs of the current view, or all six canonical anatomical views. Backgrounds are transparent and auto-cropped.");
 
     const note = document.createElement("div");
     note.className = "panel-note";
@@ -919,8 +842,9 @@ export function createPanel(
       min: 72,
       max: 1200,
       step: 6,
+      tooltip: "Output pixel scale. 96 = current canvas size; higher = upsampled. Hard-capped at 50 megapixels (a console warning fires if a setting would exceed it).",
     };
-    screenshotBody.appendChild(createControl(dpiSpec, params, fire, false));
+    screenshotBody.appendChild(createControl(dpiSpec, params, fire));
 
     const captureBtn = document.createElement("button");
     captureBtn.type = "button";
@@ -931,6 +855,7 @@ export function createPanel(
       try { await screenshot.current(); } finally { captureBtn.disabled = false; }
     });
     screenshotBody.appendChild(captureBtn);
+    attachTooltip(captureBtn, "Save the current camera angle as a transparent-background PNG, auto-cropped to the brain extent.");
 
     const allBtn = document.createElement("button");
     allBtn.type = "button";
@@ -942,6 +867,7 @@ export function createPanel(
       try { await screenshot.canonical(); } finally { allBtn.disabled = false; }
     });
     screenshotBody.appendChild(allBtn);
+    attachTooltip(allBtn, "Save 6 PNGs (one per anatomical direction: lateral L/R, anterior, posterior, dorsal, ventral), each auto-cropped.");
   }
 
   // Reset button at the bottom — clears localStorage and reloads.
@@ -961,6 +887,7 @@ export function createPanel(
   });
   resetWrapper.appendChild(resetBtn);
   panel.appendChild(resetWrapper);
+  attachTooltip(resetBtn, "Clear all panel parameters, camera state, section-collapse state, and the cached dataset, then reload the page.");
 
   let open = true;
   const setOpen = (next: boolean): void => {
