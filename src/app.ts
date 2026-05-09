@@ -460,6 +460,7 @@ export async function runApp(container: HTMLElement): Promise<void> {
     gl.uniform1f(program.uniforms.get("u_arrowScale")!, bounds.radius * params.arrowScale);
     gl.uniform1f(program.uniforms.get("u_directionSign")!, params.arrowFlipDirection ? -1.0 : 1.0);
     gl.uniform1f(program.uniforms.get("u_widthTails")!, params.arrowBodyWidth);
+    gl.uniform1f(program.uniforms.get("u_arrowHeadFrac")!, params.arrowHeadFrac);
     gl.uniform4f(program.uniforms.get("u_arrowColor")!, params.arrowColorR, params.arrowColorG, params.arrowColorB, 1.0);
     gl.uniform1f(program.uniforms.get("u_arrowOpacity")!, params.arrowOpacity);
     if (!useCurved) {

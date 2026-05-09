@@ -1,9 +1,10 @@
 #version 300 es
 precision highp float;
 
-uniform float u_widthTails;   // matches original default 0.25
-uniform vec4 u_arrowColor;    // a = mix factor between region color (a=0) and arrow color (a=1)
-uniform float u_arrowOpacity; // 0..1; final fragment alpha (with shade-edge anti-alias)
+uniform float u_widthTails;     // matches original default 0.25
+uniform float u_arrowHeadFrac;  // head fraction of total length, default 0.25 (legacy)
+uniform vec4 u_arrowColor;      // a = mix factor between region color (a=0) and arrow color (a=1)
+uniform float u_arrowOpacity;   // 0..1; final fragment alpha (with shade-edge anti-alias)
 
 in vec4 v_color;
 in vec3 v_normal;
@@ -14,9 +15,15 @@ out vec4 fragColor;
 void main() {
   float shade;
 
-  if (v_surfaceUV.y >= 0.5) {
-    // Arrow head: triangle.
-    float arrowHeadY = 1.0 - 2.0 * (v_surfaceUV.y - 0.5);
+  // Quad y in [-1, 1]. Head occupies the top 2*headFrac (y in [headThr, 1]),
+  // body occupies the rest (y in [-1, headThr]). Default headFrac=0.25
+  // reproduces the original 0.5 threshold.
+  float headFrac = max(u_arrowHeadFrac, 0.001);
+  float headThr = 1.0 - 2.0 * headFrac;
+
+  if (v_surfaceUV.y >= headThr) {
+    // Arrow head: triangle. arrowHeadY=1 at base (y=headThr), 0 at apex (y=1).
+    float arrowHeadY = (1.0 - v_surfaceUV.y) / (2.0 * headFrac);
     float leftEdge = -arrowHeadY;
     float rightEdge = arrowHeadY;
     float leftStep = 1.0 - smoothstep(leftEdge - 0.15, leftEdge, v_surfaceUV.x);

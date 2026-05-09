@@ -28,6 +28,7 @@ export interface Params {
   arrowHeight: number;         // u_arrowHeight (length scaling)
   arrowWidth: number;          // u_arrowWidth — head (max) width
   arrowBodyWidth: number;      // u_widthTails — body width as fraction of head width (0..1)
+  arrowHeadFrac: number;       // u_arrowHeadFrac — fraction of total length occupied by the head (0..1); body fraction = 1 - this
   arrowDist: number;           // u_arrowDist (offset along normal)
   arrowOpacity: number;        // u_arrowOpacity
   arrowFlipDirection: boolean; // negate tangent in arrow shader
@@ -68,6 +69,7 @@ export const defaultParams: Params = {
   arrowHeight: 1.3,
   arrowWidth: 0.9,
   arrowBodyWidth: 0.25,
+  arrowHeadFrac: 0.25,
   arrowDist: 0.5,
   arrowOpacity: 0.72,
   arrowFlipDirection: true,
@@ -189,18 +191,19 @@ const LIC_CONTROLS: ControlSpec[] = [
   { key: "licEmphasizeSingular", label: "Emphasize singularities", type: "checkbox" },
 ];
 
-const ARROW_CONTROLS: ControlSpec[] = [
-  // TODO(curved-arrows): re-enable once the curved-ribbon path renders correctly.
-  // Backing infrastructure is intact (curvedArrows.ts, arrow.curved.vert.glsl,
-  // createCurvedArrowRenderable, the useCurved branch in app.ts render loop).
-  // { key: "arrowCurved", label: "Curved arrows (follow streamlines)", type: "checkbox", expensive: true },
+// Section now split into two parts: layout-level placement (above the
+// designer) and per-glyph shape (inside the designer with a live preview).
+const GLYPH_LAYOUT_CONTROLS: ControlSpec[] = [
   { key: "arrowBorderMode", label: "Borders only (M2 mode)", type: "checkbox", expensive: true },
   { key: "arrowDensity", label: "Density (smaller = denser)", type: "range", min: 0.02, max: 0.18, step: 0.005, expensive: true },
   { key: "arrowScale", label: "Size", type: "range", min: 0.002, max: 0.025, step: 0.0005, expensive: true },
+  { key: "arrowDist", label: "Distance from surface", type: "range", min: 0, max: 5, step: 0.1 },
+];
+
+const GLYPH_DESIGNER_CONTROLS: ControlSpec[] = [
   { key: "arrowHeight", label: "Length", type: "range", min: 0.5, max: 8, step: 0.1, expensive: true },
   { key: "arrowWidth", label: "Head width", type: "range", min: 0.5, max: 4, step: 0.1 },
   { key: "arrowBodyWidth", label: "Body width (fraction of head)", type: "range", min: 0.05, max: 1, step: 0.02 },
-  { key: "arrowDist", label: "Distance from surface", type: "range", min: 0, max: 5, step: 0.1 },
   { key: "arrowOpacity", label: "Opacity", type: "range", min: 0, max: 1, step: 0.02 },
   { key: "arrowFlipDirection", label: "Flip direction", type: "checkbox" },
   { key: "arrowColorR", label: "Color", type: "color" },
@@ -670,16 +673,235 @@ export function createPanel(
     surfaceBody.appendChild(createControl(c, params, fire, false));
   }
 
-  const arrowsBody = makeSection("arrows", "Arrows");
-  for (const c of ARROW_CONTROLS) {
+  // ---- Glyphs section ----
+  // Top of the section: layout-level placement controls (where & how dense).
+  // Below them: a "Glyph designer" sub-block with a live SVG preview and the
+  // shape-shaping controls (length, head width, body width, opacity, flip,
+  // color). The preview re-renders on every shape-control change so users can
+  // see the glyph evolve before scrolling back up to the brain.
+  const glyphsBody = makeSection("arrows", "Glyphs");
+
+  for (const c of GLYPH_LAYOUT_CONTROLS) {
     const isExpensive = !!c.expensive;
-    arrowsBody.appendChild(
+    glyphsBody.appendChild(
       createControl(c, params, () => {
         if (isExpensive) dirtyExpensive = true;
         fire();
       }, isExpensive),
     );
   }
+
+  // ---- Glyph designer (sub-block with preview) ----
+  const designer = document.createElement("div");
+  designer.className = "glyph-designer";
+
+  const designerHeading = document.createElement("div");
+  designerHeading.className = "glyph-designer-heading";
+  designerHeading.textContent = "Glyph designer";
+  designer.appendChild(designerHeading);
+
+  const previewWrap = document.createElement("div");
+  previewWrap.className = "glyph-preview-wrap";
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const previewSvg = document.createElementNS(SVG_NS, "svg");
+  // Wide viewBox so the horizontal glyph (head pointing right) uses the space
+  // efficiently, leaving comfortable margins for the longest configurations.
+  previewSvg.setAttribute("viewBox", "-80 -45 160 90");
+  previewSvg.setAttribute("class", "glyph-preview");
+  previewSvg.setAttribute("aria-label", "Glyph preview");
+  // Inner group that we transform: rotate -90° (head points right) by default,
+  // additional 180° when flip-direction is on (head points left).
+  const previewGroup = document.createElementNS(SVG_NS, "g");
+  previewGroup.setAttribute("class", "glyph-preview-group");
+  // Horizontal centerline so users can see the glyph's flow axis.
+  const baseline = document.createElementNS(SVG_NS, "line");
+  baseline.setAttribute("x1", "-76");
+  baseline.setAttribute("x2", "76");
+  baseline.setAttribute("y1", "0");
+  baseline.setAttribute("y2", "0");
+  baseline.setAttribute("stroke", "rgba(128,128,128,0.25)");
+  baseline.setAttribute("stroke-dasharray", "2 3");
+  previewSvg.appendChild(baseline);
+  previewSvg.appendChild(previewGroup);
+  // Polygon (body + head) drawn as a single closed path so opacity blends
+  // correctly without a seam at the body/head boundary.
+  const glyphPath = document.createElementNS(SVG_NS, "path");
+  glyphPath.setAttribute("stroke-linejoin", "round");
+  previewGroup.appendChild(glyphPath);
+  previewWrap.appendChild(previewSvg);
+  designer.appendChild(previewWrap);
+
+  const renderPreview = (): void => {
+    // Map slider values into SVG units. Scales chosen so defaults sit
+    // comfortably inside the 160×90 viewBox and the slider maxes only clip
+    // slightly at extremes. Drawing internally treats the arrow as
+    // up-pointing; the previewGroup rotation re-orients it horizontally.
+    const lengthFactor = 12;
+    const widthFactor = 12;
+    const fullLength = 2 * params.arrowHeight * lengthFactor;
+    const headWidth = params.arrowWidth * widthFactor;
+    const bodyWidth = headWidth * params.arrowBodyWidth;
+    const halfL = fullLength / 2;
+    const headHeight = fullLength * params.arrowHeadFrac;
+    const headBaseY = -halfL + headHeight;
+    const bodyBottomY = halfL;
+    const halfBW = bodyWidth / 2;
+    const halfHW = headWidth / 2;
+    const d =
+      `M ${-halfBW} ${bodyBottomY} ` +
+      `L ${-halfBW} ${headBaseY} ` +
+      `L ${-halfHW} ${headBaseY} ` +
+      `L 0 ${-halfL} ` +
+      `L ${halfHW} ${headBaseY} ` +
+      `L ${halfBW} ${headBaseY} ` +
+      `L ${halfBW} ${bodyBottomY} Z`;
+    glyphPath.setAttribute("d", d);
+    const r = Math.round(params.arrowColorR * 255);
+    const g = Math.round(params.arrowColorG * 255);
+    const b = Math.round(params.arrowColorB * 255);
+    glyphPath.setAttribute("fill", `rgb(${r}, ${g}, ${b})`);
+    glyphPath.setAttribute("fill-opacity", String(params.arrowOpacity));
+    // Stroke contrasts mildly with the glyph for definition.
+    glyphPath.setAttribute("stroke", "rgba(128,128,128,0.45)");
+    glyphPath.setAttribute("stroke-width", "0.6");
+    // Default rotation -90° (head points right); flip toggles +180°.
+    const rot = params.arrowFlipDirection ? 90 : -90;
+    previewGroup.setAttribute("transform", `rotate(${rot})`);
+    // Contrast background: dark glyph → light bg, light glyph → dark bg.
+    // Rec. 601 luminance approximation in the linear-ish slider RGB space.
+    const lum = 0.299 * params.arrowColorR + 0.587 * params.arrowColorG + 0.114 * params.arrowColorB;
+    const bg = lum > 0.5 ? "rgba(28, 28, 28, 0.92)" : "rgba(238, 238, 238, 0.95)";
+    previewWrap.style.backgroundColor = bg;
+    // Flip the centerline color to keep it visible against either bg.
+    baseline.setAttribute("stroke", lum > 0.5 ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.18)");
+  };
+
+  // Coupled body/head fraction sliders. They share `arrowHeadFrac`: body =
+  // 1 - head, head = head. Slider min/max clamps avoid degenerate (zero-
+  // length) head or body, which would also divide-by-zero in the shader.
+  const buildFractionPair = (): DocumentFragment => {
+    const frag = document.createDocumentFragment();
+    const minFrac = 0.05;
+    const maxFrac = 0.95;
+    const stepFrac = 0.01;
+
+    const formatFrac = (n: number): string => n.toFixed(2);
+    const clamp = (v: number): number => Math.max(minFrac, Math.min(maxFrac, v));
+
+    interface FractionSlider {
+      wrap: HTMLElement;
+      slider: HTMLInputElement;
+      input: HTMLInputElement;
+    }
+    const makeSlider = (label: string): FractionSlider => {
+      const wrap = document.createElement("div");
+      wrap.className = "panel-control";
+      const lbl = document.createElement("label");
+      lbl.className = "panel-label";
+      const txt = document.createElement("span");
+      txt.className = "panel-label-text";
+      txt.textContent = label;
+      lbl.appendChild(txt);
+
+      // Editable value input — same pattern as createControl's range type so
+      // typed numbers commit via Enter/blur and Escape reverts.
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "panel-value panel-value-input";
+      input.inputMode = "decimal";
+      input.spellcheck = false;
+      input.title = `Click to type a value (range: ${minFrac}–${maxFrac})`;
+      lbl.appendChild(input);
+
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.min = String(minFrac);
+      slider.max = String(maxFrac);
+      slider.step = String(stepFrac);
+      wrap.appendChild(lbl);
+      wrap.appendChild(slider);
+      return { wrap, slider, input };
+    };
+
+    const bodyControl = makeSlider("Body length (fraction)");
+    const headControl = makeSlider("Head length (fraction)");
+
+    const sync = (): void => {
+      const body = 1 - params.arrowHeadFrac;
+      const head = params.arrowHeadFrac;
+      bodyControl.slider.value = String(body);
+      bodyControl.input.value = formatFrac(body);
+      headControl.slider.value = String(head);
+      headControl.input.value = formatFrac(head);
+    };
+    sync();
+
+    // Single commit point for either slider perspective. `isHead` distinguishes
+    // which raw value was supplied: the head fraction directly, or the body
+    // fraction (1 - head).
+    const commit = (raw: number, isHead: boolean): void => {
+      const headFrac = clamp(isHead ? raw : 1 - raw);
+      params.arrowHeadFrac = headFrac;
+      sync();
+      fire();
+      renderPreview();
+    };
+
+    // Wire slider drag inputs.
+    bodyControl.slider.addEventListener("input", () =>
+      commit(parseFloat(bodyControl.slider.value), false),
+    );
+    headControl.slider.addEventListener("input", () =>
+      commit(parseFloat(headControl.slider.value), true),
+    );
+
+    // Wire editable text inputs (Enter/blur commit, Escape revert, focus selects).
+    const wireTextInput = (input: HTMLInputElement, isHead: boolean): void => {
+      input.addEventListener("focus", () => input.select());
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const n = parseFloat(input.value);
+          if (Number.isFinite(n)) commit(n, isHead);
+          else sync();
+          input.blur();
+        } else if (e.key === "Escape") {
+          sync();
+          input.blur();
+        }
+      });
+      input.addEventListener("blur", () => {
+        const n = parseFloat(input.value);
+        if (Number.isFinite(n)) commit(n, isHead);
+        else sync();
+      });
+    };
+    wireTextInput(bodyControl.input, false);
+    wireTextInput(headControl.input, true);
+
+    frag.appendChild(bodyControl.wrap);
+    frag.appendChild(headControl.wrap);
+    return frag;
+  };
+
+  // Render the existing ControlSpec controls, splicing the body/head
+  // fraction pair in right after Length so it reads as a length-related set.
+  for (const c of GLYPH_DESIGNER_CONTROLS) {
+    const isExpensive = !!c.expensive;
+    designer.appendChild(
+      createControl(c, params, () => {
+        if (isExpensive) dirtyExpensive = true;
+        fire();
+        renderPreview();
+      }, isExpensive),
+    );
+    if (c.key === "arrowHeight") {
+      designer.appendChild(buildFractionPair());
+    }
+  }
+  // Initial paint.
+  renderPreview();
+  glyphsBody.appendChild(designer);
 
   // ---- Screenshot section (optional) ----
   if (screenshot) {
