@@ -53,7 +53,7 @@ export interface Params {
 }
 
 export const defaultParams: Params = {
-  showLIC: true,
+  showLIC: false,
   showColor: true,
   showArrows: true,
   useLabelColors: false,
@@ -62,14 +62,14 @@ export const defaultParams: Params = {
   licEmphasizeSingular: false,
   arrowCurved: false,
   arrowBorderMode: false,
-  arrowDensity: 0.07,
-  arrowScale: 0.0075,
-  arrowHeight: 2.5,
-  arrowWidth: 1.5,
+  arrowDensity: 0.02,
+  arrowScale: 0.008,
+  arrowHeight: 1.3,
+  arrowWidth: 0.9,
   arrowBodyWidth: 0.25,
   arrowDist: 0.5,
-  arrowOpacity: 0.6,
-  arrowFlipDirection: false,
+  arrowOpacity: 0.72,
+  arrowFlipDirection: true,
   arrowColorR: 0,
   arrowColorG: 0,
   arrowColorB: 0,
@@ -82,7 +82,7 @@ export const defaultParams: Params = {
   surfaceDiffuse: 0.75,
   surfaceSpecular: 0.4,
   surfaceShininess: 80,
-  screenshotDPI: 150,
+  screenshotDPI: 600,
   lastDatasetName: null,
 };
 

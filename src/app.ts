@@ -328,20 +328,20 @@ export async function runApp(container: HTMLElement): Promise<void> {
 
   // Initial dataset load. Try the IndexedDB cache first so a previously-loaded
   // dataset (including user uploads) auto-restores; fall back to the bundled
-  // example/label34.* files on a cold start or cache miss.
+  // example/label18.* files on a cold start or cache miss.
   const cached = await loadCachedDataset();
   if (cached) {
     loadAndCache(cached.plyText, cached.labelsText, cached.orderText);
   } else {
     const [plyText0, labelsText0, orderText0] = await Promise.all([
-      fetchText(`${import.meta.env.BASE_URL}data/label34.ply`),
-      fetchText(`${import.meta.env.BASE_URL}data/label34.labels`),
-      fetchText(`${import.meta.env.BASE_URL}data/label34.labelorder`),
+      fetchText(`${import.meta.env.BASE_URL}data/label18.ply`),
+      fetchText(`${import.meta.env.BASE_URL}data/label18.labels`),
+      fetchText(`${import.meta.env.BASE_URL}data/label18.labelorder`),
     ]);
     loadAndCache(plyText0, labelsText0, orderText0);
     // Seed the cache with the default so subsequent reloads don't re-fetch.
     await saveDataset({
-      name: "label34.ply",
+      name: "label18.ply",
       plyText: plyText0,
       labelsText: labelsText0,
       orderText: orderText0,
