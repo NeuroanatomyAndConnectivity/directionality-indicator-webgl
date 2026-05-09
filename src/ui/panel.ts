@@ -88,6 +88,7 @@ export const defaultParams: Params = {
 
 export type OnChange = (params: Params, isExpensive: boolean) => void;
 export type OnLoadDataset = (files: { ply: File; labels: File; labelorder: File }) => Promise<void>;
+export type OnLoadBundled = (name: string) => Promise<void>;
 export interface ScreenshotHooks {
   /** Capture the current view as a PNG with transparent background. */
   current: () => Promise<void>;
@@ -339,6 +340,7 @@ export function createPanel(
   onLoadDataset?: OnLoadDataset,
   screenshot?: ScreenshotHooks,
   views?: ViewHooks,
+  onLoadBundled?: OnLoadBundled,
 ): { element: HTMLElement; toggle: () => void } {
   const root = document.createElement("div");
   root.id = "panel-root";
@@ -446,6 +448,77 @@ export function createPanel(
     }
     body.appendChild(status);
 
+    // Bundled-datasets selector (cloud-side files in public/data/). The
+    // manifest is generated at build time by scripts/build-data-manifest.mjs;
+    // we fetch it lazily so the panel still renders if it's missing.
+    if (onLoadBundled) {
+      const bundledRow = document.createElement("div");
+      bundledRow.className = "panel-control";
+      const bundledLabel = document.createElement("div");
+      bundledLabel.className = "panel-label-text";
+      bundledLabel.textContent = "Bundled datasets";
+      const select = document.createElement("select");
+      select.className = "panel-select";
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "Loading…";
+      placeholder.disabled = true;
+      placeholder.selected = true;
+      select.appendChild(placeholder);
+      bundledRow.appendChild(bundledLabel);
+      bundledRow.appendChild(select);
+      body.appendChild(bundledRow);
+
+      // Track current selection so we can restore it after a failed load.
+      let lastSelected = "";
+      void (async () => {
+        try {
+          const r = await fetch(`${import.meta.env.BASE_URL}data/manifest.json`);
+          if (!r.ok) throw new Error(`manifest ${r.status}`);
+          const j = (await r.json()) as { datasets: string[] };
+          select.replaceChildren();
+          const ph = document.createElement("option");
+          ph.value = "";
+          ph.textContent = "Pick a bundled dataset…";
+          ph.disabled = true;
+          ph.selected = true;
+          select.appendChild(ph);
+          for (const name of j.datasets) {
+            const opt = document.createElement("option");
+            opt.value = name;
+            opt.textContent = name;
+            select.appendChild(opt);
+          }
+        } catch {
+          select.replaceChildren();
+          const ph = document.createElement("option");
+          ph.textContent = "(no manifest)";
+          ph.disabled = true;
+          ph.selected = true;
+          select.appendChild(ph);
+        }
+      })();
+
+      select.addEventListener("change", async () => {
+        const name = select.value;
+        if (!name || name === lastSelected) return;
+        status.textContent = `Loading ${name}…`;
+        status.style.color = "var(--text-mute)";
+        try {
+          await onLoadBundled(name);
+          params.lastDatasetName = `${name}.ply`;
+          saveParamsToStorage(params);
+          status.textContent = `Loaded: ${name} (bundled)`;
+          status.style.color = "var(--ok)";
+          lastSelected = name;
+        } catch (e) {
+          status.textContent = "Error: " + (e instanceof Error ? e.message : String(e));
+          status.style.color = "var(--danger)";
+          select.value = lastSelected;
+        }
+      });
+    }
+
     const row = document.createElement("div");
     row.className = "panel-file-row";
 
@@ -459,7 +532,7 @@ export function createPanel(
     const fileLabel = document.createElement("label");
     fileLabel.htmlFor = fileInput.id;
     fileLabel.className = "panel-file-label";
-    fileLabel.innerHTML = '<span class="icon" aria-hidden="true">⬆</span><span>Choose files…</span>';
+    fileLabel.innerHTML = '<span class="icon" aria-hidden="true">⬆</span><span>Or upload local files…</span>';
 
     fileInput.addEventListener("change", async () => {
       if (!fileInput.files) return;

@@ -14,7 +14,9 @@
     "url": "https://github.com/NeuroanatomyAndConnectivity/directionality-indicator-webgl/issues"
   },
   "scripts": {
+    "predev": "node scripts/build-data-manifest.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/build-data-manifest.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",

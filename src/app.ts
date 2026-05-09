@@ -326,6 +326,24 @@ export async function runApp(container: HTMLElement): Promise<void> {
   // re-processing path (parcel-smoothing slider) that has since been reverted.
   const loadAndCache = loadDataset;
 
+  // Fetch a bundled dataset (one of the basenames listed in
+  // public/data/manifest.json), apply it, and persist to the IndexedDB cache
+  // so a reload restores it instead of going to the cold-start default.
+  async function loadBundled(name: string): Promise<void> {
+    const [plyText, labelsText, orderText] = await Promise.all([
+      fetchText(`${import.meta.env.BASE_URL}data/${name}.ply`),
+      fetchText(`${import.meta.env.BASE_URL}data/${name}.labels`),
+      fetchText(`${import.meta.env.BASE_URL}data/${name}.labelorder`),
+    ]);
+    loadAndCache(plyText, labelsText, orderText);
+    await saveDataset({
+      name: `${name}.ply`,
+      plyText,
+      labelsText,
+      orderText,
+    });
+  }
+
   // Initial dataset load. Try the IndexedDB cache first so a previously-loaded
   // dataset (including user uploads) auto-restores; fall back to the bundled
   // example/label18.* files on a cold start or cache miss.
@@ -333,19 +351,7 @@ export async function runApp(container: HTMLElement): Promise<void> {
   if (cached) {
     loadAndCache(cached.plyText, cached.labelsText, cached.orderText);
   } else {
-    const [plyText0, labelsText0, orderText0] = await Promise.all([
-      fetchText(`${import.meta.env.BASE_URL}data/label18.ply`),
-      fetchText(`${import.meta.env.BASE_URL}data/label18.labels`),
-      fetchText(`${import.meta.env.BASE_URL}data/label18.labelorder`),
-    ]);
-    loadAndCache(plyText0, labelsText0, orderText0);
-    // Seed the cache with the default so subsequent reloads don't re-fetch.
-    await saveDataset({
-      name: "label18.ply",
-      plyText: plyText0,
-      labelsText: labelsText0,
-      orderText: orderText0,
-    });
+    await loadBundled("label18");
   }
 
   view.onResize(() => {
@@ -395,6 +401,7 @@ export async function runApp(container: HTMLElement): Promise<void> {
         view.requestRender();
       },
     },
+    loadBundled,
   );
   container.appendChild(panelElement);
 
